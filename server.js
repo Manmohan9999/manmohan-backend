@@ -7,7 +7,30 @@ const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 
 const app = express();
-app.use(cors());
+
+// Refuse to start without a real JWT secret (prevents token forgery)
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET is not set. Refusing to start.');
+  process.exit(1);
+}
+
+// CORS: only allow your own frontend domains.
+// Set CORS_ORIGINS in your environment, comma-separated, e.g.
+//   CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+// Falls back to localhost for local development.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow tools with no origin (curl, Postman, server-to-server) and allowed domains
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+}));
+
 app.use(express.json());
 
 // Handle invalid JSON bodies gracefully
@@ -212,7 +235,7 @@ app.post('/api/verify-otp', async (req, res) => {
           }
           const token = jwt.sign(
             { phone: normalized, id: dbUser?._id },
-            process.env.JWT_SECRET || 'fallback_secret',
+            process.env.JWT_SECRET,
             { expiresIn: '7d' }
           );
           return res.json({ success: true, token, provider: 'twilio-verify' });
@@ -243,7 +266,7 @@ app.post('/api/verify-otp', async (req, res) => {
       }
       const token = jwt.sign(
         { phone: normalized, id: dbUser?._id },
-        process.env.JWT_SECRET || 'fallback_secret',
+        process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
       return res.json({ success: true, token, provider: 'local' });
@@ -278,14 +301,14 @@ app.get('/api/me', (req, res) => {
     if (!auth || !auth.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'No token' });
     }
-    const decoded = jwt.verify(auth.slice(7), process.env.JWT_SECRET || 'fallback_secret');
+    const decoded = jwt.verify(auth.slice(7), process.env.JWT_SECRET);
     return res.json({ phone: decoded.phone });
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
 });
 
-// Serve React build in production
+// Serve React build in production (only if a build folder exists; harmless otherwise)
 if (process.env.NODE_ENV === 'production') {
   const buildPath = path.join(__dirname, 'build');
   app.use(express.static(buildPath));
